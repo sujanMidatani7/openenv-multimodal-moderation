@@ -1,6 +1,6 @@
 # OpenEnv Multimodal Moderation Environment
 
-This project implements a production-ready OpenEnv environment for multimodal content moderation. The agent moves through a fixed workflow:
+Production-ready OpenEnv environment for multimodal content moderation with a fixed episode flow:
 
 1. `analyze`
 2. `retrieve_policy`
@@ -8,64 +8,70 @@ This project implements a production-ready OpenEnv environment for multimodal co
 4. `review`
 5. `finalize`
 
-The environment follows the installed Meta PyTorch OpenEnv interfaces:
+The environment follows the official Meta OpenEnv API:
 
 - `reset(...) -> Observation`
 - `step(action) -> Observation`
 - `state -> State`
 
-It subclasses `openenv.core.env_server.interfaces.Environment` and exposes HTTP endpoints through `create_fastapi_app(...)`.
+It subclasses `openenv.core.env_server.interfaces.Environment` and serves HTTP endpoints via `create_fastapi_app(...)`.
 
 ## Project Layout
 
 ```text
-app/
+server/
   __init__.py
+  app.py
   env.py
   logic.py
   models.py
+  server_routes.py
+  requirements.txt
+  Dockerfile
   rag/
     __init__.py
     policies.py
     retriever.py
-server.py
+client.py
+models.py
 inference.py
 openenv.yaml
-Dockerfile
+pyproject.toml
 requirements.txt
 README.md
 ```
 
 ## Environment Design
 
-Each episode contains a single moderation case with:
+Each episode uses one moderation case containing:
 
-- user text
+- text content
 - image metadata
 - expected moderation action
 - reviewer recommendation
 
-State persists in `state_data` across every step and stores:
+Persistent `state_data` stores:
 
 - selected case
 - retrieved policy chunks
 - action history
 - reviewer note
-- cumulative rewards
+- reward breakdown
+- final action
 
-### Moderation actions
+### Actions
 
 - `allow`
 - `flag`
 - `remove`
 - `escalate`
 
-### Rule overrides
+### Rule Overrides
 
-- text containing `kill` or `murder` forces a `remove` expectation
-- text containing `nude` forces a `flag` expectation
+- content containing `kill` or `murder` forces a `remove` expectation
+- content containing `nude` forces a `flag` expectation
 
-### Dense rewards
+### Dense Rewards
 
 - analysis step: `+0.2`
 - retrieval grounding step: `+0.2`
@@ -81,20 +87,37 @@ The retriever uses:
 - `FAISS IndexFlatIP`
 - top-`k=3` retrieval over curated moderation policy chunks
 
-The Docker build pre-downloads the encoder so there is no large model download at runtime.
+The model loader prefers the local Hugging Face cache and uses `local_files_only=True` to avoid runtime downloads.
+
+## Install
+
+This repo is set up for `uv` and the official OpenEnv package source from the Meta repo.
+
+```powershell
+$env:UV_CACHE_DIR = "$PWD\.uv-cache"
+uv sync
+```
+
+If you hit a stuck Windows cache rename error, remove the local cache and retry:
+
+```powershell
+Remove-Item -Recurse -Force .\.uv-cache -ErrorAction SilentlyContinue
+$env:UV_CACHE_DIR = "$PWD\.uv-cache"
+uv sync
+```
 
 ## Run Locally
 
-Install dependencies:
+Preferred:
 
-```bash
-pip install -r requirements.txt
+```powershell
+uv run server
 ```
 
-Start the OpenEnv server:
+Direct Python entrypoint:
 
-```bash
-uvicorn server:app --host 0.0.0.0 --port 8000
+```powershell
+python server/app.py
 ```
 
 Open API docs:
@@ -103,17 +126,27 @@ Open API docs:
 http://127.0.0.1:8000/docs
 ```
 
-Additional helper endpoints:
+## HTTP Endpoints
 
-- `/cases` lists built-in case ids
-- `/state_full` returns the full typed state object
-- `/episode_summary` returns final scores and reviewer output
+Core OpenEnv endpoints:
+
+- `POST /reset`
+- `POST /step`
+- `GET /state`
+- `GET /schema`
+- `GET /docs`
+
+Helper endpoints:
+
+- `GET /cases` lists built-in case ids
+- `GET /state_full` returns full typed state
+- `GET /episode_summary` returns final reward and reviewer output
 
 ## Inference Script
 
-`inference.py` uses the OpenAI Python client against an OpenAI-compatible endpoint.
+`inference.py` uses the OpenAI Python client against an OpenAI-compatible API.
 
-Required environment variables:
+Environment variables:
 
 - `API_BASE_URL`
 - `MODEL_NAME`
@@ -125,29 +158,29 @@ Optional:
 
 Run:
 
-```bash
+```powershell
 python inference.py
 ```
 
-The script:
+Notes:
 
-- resets the environment per case
-- runs the full episode loop
-- asks the model for a JSON action at each step
-- currently th code uses llama-3.1-8b-instant model
-- prints per-case and aggregate scores
+- the script iterates through all built-in cases
+- it prints per-case reward plus aggregate score
+- the current default `MODEL_NAME` in code is `llama-3.1-8b-instant`
 
 ## Docker
 
+Docker uses `uv` for package installation.
+
 Build:
 
-```bash
-docker build -t openenv-moderation .
+```powershell
+docker build -f server/Dockerfile -t openenv-moderation .
 ```
 
 Run:
 
-```bash
+```powershell
 docker run --rm -p 8000:8000 openenv-moderation
 ```
 
