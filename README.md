@@ -1,3 +1,13 @@
+---
+title: OpenEnv Multimodal Moderation Environment
+emoji: 🛡️
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+license: apache-2.0
+---
+
 # OpenEnv Multimodal Moderation Environment
 
 Production-ready OpenEnv environment for multimodal content moderation with a fixed episode flow:
@@ -182,6 +192,15 @@ Run:
 
 ```powershell
 docker run --rm -p 8000:8000 openenv-moderation
+```
+
+to run the deployed version:
+```powershell
+docker run -it -p 7860:7860 --platform=linux/amd64 \
+	-e API_BASE_URL="YOUR_VALUE_HERE" \
+	-e MODEL_NAME="YOUR_VALUE_HERE" \
+	-e HF_TOKEN="YOUR_VALUE_HERE" \
+	registry.hf.space/sujanmidatani-openenv-multimodal-moderation:latest 
 ```
 
 ## Resource Profile

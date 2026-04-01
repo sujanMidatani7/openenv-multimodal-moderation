@@ -18,7 +18,7 @@ COPY models.py ./models.py
 COPY inference.py ./inference.py
 COPY openenv.yaml ./openenv.yaml
 COPY README.md ./README.md
-COPY .env ./.env
+# COPY .env ./.env
 COPY __init__.py ./__init__.py
 
 EXPOSE 8000
