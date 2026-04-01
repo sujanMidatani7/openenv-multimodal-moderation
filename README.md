@@ -200,6 +200,7 @@ docker run -it -p 7860:7860 --platform=linux/amd64 \
 	-e API_BASE_URL="YOUR_VALUE_HERE" \
 	-e MODEL_NAME="YOUR_VALUE_HERE" \
 	-e HF_TOKEN="YOUR_VALUE_HERE" \
+    -e ENV_BASE_URL="YOUR_VALUE_HERE" \
 	registry.hf.space/sujanmidatani-openenv-multimodal-moderation:latest 
 ```
 
