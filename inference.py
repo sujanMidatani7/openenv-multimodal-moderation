@@ -8,14 +8,14 @@ from typing import Any
 import httpx
 from openai import OpenAI
 
-from app.logic import DEFAULT_CASE_IDS
+from server.logic import DEFAULT_CASE_IDS
 from dotenv import load_dotenv
 load_dotenv()
 
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://127.0.0.1:8000")
 API_BASE_URL = os.getenv("API_BASE_URL")
-MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct:novita")
-API_TOKEN = os.getenv("API_TOKEN")
+MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
 
 @dataclass
@@ -88,8 +88,8 @@ def run_episode(http: httpx.Client, llm: OpenAI, case_id: str) -> EpisodeResult:
 
 
 def main() -> None:
-    # print(API_BASE_URL, MODEL_NAME, API_TOKEN)
-    llm = OpenAI(base_url=API_BASE_URL, api_key=API_TOKEN)
+    # print(API_BASE_URL, MODEL_NAME, HF_TOKEN)
+    llm = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
     results: list[EpisodeResult] = []
     with httpx.Client(base_url=ENV_BASE_URL, timeout=60.0) as http:
         for case_id in DEFAULT_CASE_IDS:

@@ -10,13 +10,13 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi==0.115.12",
-  "uvicorn[standard]==0.34.0",
-  "openenv-core",
-  "pydantic==2.10.6",
+  "uvicorn[standard]==0.42.0",
+  "openenv-core==0.2.3",
+  "pydantic==2.12.5",
   "faiss-cpu==1.10.0",
   "sentence-transformers==3.4.1",
   "numpy==2.2.3",
-  "openai==1.65.5",
+  "openai==2.30.0",
   "httpx==0.28.1",
   "pyyaml==6.0.2",
 ]

@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from app.models import ActionType, PolicyChunk, StepType
-from app.rag import POLICY_CHUNKS, PolicyRetriever
+from server.models import ActionType, PolicyChunk, StepType
+from server.rag import POLICY_CHUNKS, PolicyRetriever
 
 
 STEP_SEQUENCE = [

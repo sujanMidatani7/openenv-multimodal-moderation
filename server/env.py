@@ -4,7 +4,7 @@ from typing import Any
 
 from openenv.core.env_server.interfaces import Environment
 
-from app.logic import (
+from server.logic import (
     EpisodeContext,
     build_query,
     build_retriever,
@@ -15,7 +15,7 @@ from app.logic import (
     next_step,
     reviewer_recommendation,
 )
-from app.models import Action, Content, Observation, PolicyChunk, State, StepType
+from server.models import Action, Content, Observation, PolicyChunk, State, StepType
 
 
 class ContentModerationEnv(Environment[Action, Observation, State]):

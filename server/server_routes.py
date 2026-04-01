@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from app.env import ContentModerationEnv
-from app.logic import DEFAULT_CASE_IDS
+from server.logic import DEFAULT_CASE_IDS
+from server.env import ContentModerationEnv
 
 
 def attach_server_routes(app: FastAPI, env: ContentModerationEnv) -> FastAPI:
