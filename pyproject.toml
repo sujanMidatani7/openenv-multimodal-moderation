@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-multimodal-moderation"
+version = "1.0.0"
+description = "OpenEnv multimodal content moderation environment with RAG-backed policy retrieval."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.115.12",
+  "uvicorn[standard]==0.34.0",
+  "openenv-core",
+  "pydantic==2.10.6",
+  "faiss-cpu==1.10.0",
+  "sentence-transformers==3.4.1",
+  "numpy==2.2.3",
+  "openai==1.65.5",
+  "httpx==0.28.1",
+  "pyyaml==6.0.2",
+]
+
+[project.scripts]
+server = "server.app:main"
+
+[tool.setuptools]
+py-modules = ["client", "models"]
+
+[tool.setuptools.packages.find]
+include = ["app", "app.*", "server", "server.*"]

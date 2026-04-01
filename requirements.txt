@@ -1,0 +1,10 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+openenv-core
+pydantic==2.10.6
+faiss-cpu==1.10.0
+sentence-transformers==3.4.1
+numpy==2.2.3
+openai==1.65.5
+httpx==0.28.1
+pyyaml==6.0.2

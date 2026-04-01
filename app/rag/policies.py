@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+
+POLICY_CHUNKS = [
+    {
+        "chunk_id": "violence-01",
+        "title": "Violence and Credible Threats",
+        "text": (
+            "Content that includes direct threats, instructions to kill, or praise for murder "
+            "must be removed immediately. Escalate only when context is ambiguous or safety risk "
+            "cannot be resolved with the available evidence."
+        ),
+    },
+    {
+        "chunk_id": "violence-02",
+        "title": "Violence Context Review",
+        "text": (
+            "Fictional, quoted, or documentary references to violence may remain allowed when the "
+            "speaker is clearly not endorsing harm. When intent is uncertain, flag or escalate "
+            "instead of allowing outright."
+        ),
+    },
+    {
+        "chunk_id": "nudity-01",
+        "title": "Adult Nudity",
+        "text": (
+            "Mentions or metadata indicating nudity should be flagged for human review when the "
+            "material may be adult sexual content. Remove only if the content is explicit or paired "
+            "with exploitative cues."
+        ),
+    },
+    {
+        "chunk_id": "nudity-02",
+        "title": "Suggestive Imagery Metadata",
+        "text": (
+            "Image tags such as exposed body parts, provocative posing, or synthetic nude prompts "
+            "increase risk and should bias the system toward flagging rather than allowing."
+        ),
+    },
+    {
+        "chunk_id": "self-harm-01",
+        "title": "Self-Harm and Crisis",
+        "text": (
+            "Content asking for methods of self-harm or celebrating imminent self-harm should be "
+            "escalated or removed depending on immediacy. Support-seeking or recovery discussion "
+            "should generally remain allowed."
+        ),
+    },
+    {
+        "chunk_id": "harassment-01",
+        "title": "Harassment and Abuse",
+        "text": (
+            "Targeted abuse, slurs, and repeated demeaning language should be flagged or removed "
+            "based on severity. Benign disagreement or criticism alone is not enough for removal."
+        ),
+    },
+    {
+        "chunk_id": "spam-01",
+        "title": "Spam and Low-Quality Promotion",
+        "text": (
+            "Commercial spam, scam bait, or repetitive promotional text should usually be flagged. "
+            "Remove only when the content is clearly malicious or part of coordinated abuse."
+        ),
+    },
+    {
+        "chunk_id": "misinfo-01",
+        "title": "Misinformation Handling",
+        "text": (
+            "Potential misinformation without direct physical harm usually requires flagging or "
+            "escalation, not automatic removal. High-risk medical or civic deception should lean "
+            "toward escalation."
+        ),
+    },
+    {
+        "chunk_id": "graphic-01",
+        "title": "Graphic Media",
+        "text": (
+            "Graphic injury descriptions or metadata indicating gore should be removed or escalated "
+            "when public safety and age exposure concerns are high."
+        ),
+    },
+    {
+        "chunk_id": "default-01",
+        "title": "Default Safe Handling",
+        "text": (
+            "When evidence is weak and no policy trigger is present, prefer allowing the content. "
+            "Use escalation only when confidence is low or policy signals conflict."
+        ),
+    },
+]
