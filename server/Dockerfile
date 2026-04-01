@@ -8,16 +8,19 @@ ENV SENTENCE_TRANSFORMERS_HOME=/opt/models
 
 WORKDIR /workspace
 
-COPY requirements.txt .
+COPY server/requirements.txt ./requirements.txt
 RUN uv pip install --system --no-cache -r requirements.txt
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', cache_folder='/opt/models')"
 
-COPY app ./app
-COPY server.py ./server.py
+COPY server ./server
+COPY client.py ./client.py
+COPY models.py ./models.py
 COPY inference.py ./inference.py
 COPY openenv.yaml ./openenv.yaml
 COPY README.md ./README.md
+COPY .env ./.env
+COPY __init__.py ./__init__.py
 
 EXPOSE 8000
 
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000"]

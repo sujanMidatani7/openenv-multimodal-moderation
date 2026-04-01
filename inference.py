@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -16,6 +18,7 @@ ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://127.0.0.1:8000")
 API_BASE_URL = os.getenv("API_BASE_URL")
 MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
 HF_TOKEN = os.getenv("HF_TOKEN")
+OUTPUT_DIR = Path("outputs")
 
 
 @dataclass
@@ -24,6 +27,14 @@ class EpisodeResult:
     total_reward: float
     final_action: str | None
     expected_action: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "case_id": self.case_id,
+            "total_reward": self.total_reward,
+            "final_action": self.final_action,
+            "expected_action": self.expected_action,
+        }
 
 
 def llm_action(client: OpenAI, observation: dict[str, Any]) -> dict[str, str]:
@@ -88,7 +99,7 @@ def run_episode(http: httpx.Client, llm: OpenAI, case_id: str) -> EpisodeResult:
 
 
 def main() -> None:
-    # print(API_BASE_URL, MODEL_NAME, HF_TOKEN)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     llm = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
     results: list[EpisodeResult] = []
     with httpx.Client(base_url=ENV_BASE_URL, timeout=60.0) as http:
@@ -97,12 +108,26 @@ def main() -> None:
             print(f"Completed case_id={case_id} with total_reward={results[-1].total_reward:.3f}")
 
     aggregate = sum(result.total_reward for result in results)
+    output_payload = {
+        "generated_at": datetime.now().isoformat(),
+        "env_base_url": ENV_BASE_URL,
+        "api_base_url": API_BASE_URL,
+        "model_name": MODEL_NAME,
+        "episodes": len(results),
+        "aggregate_reward": aggregate,
+        "average_reward": aggregate / len(results) if results else 0.0,
+        "results": [result.to_dict() for result in results],
+    }
+    output_path = OUTPUT_DIR / f"inference_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    output_path.write_text(json.dumps(output_payload, indent=2), encoding="utf-8")
+
     for result in results:
         print(
             f"case_id={result.case_id} total_reward={result.total_reward:.3f} "
             f"final_action={result.final_action} expected_action={result.expected_action}"
         )
     print(f"episodes={len(results)} aggregate_reward={aggregate:.3f} average_reward={aggregate / len(results):.3f}")
+    print(f"Saved results to {output_path}")
 
 
 if __name__ == "__main__":
