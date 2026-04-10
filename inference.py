@@ -2,132 +2,190 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+import re
+import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Optional
 
-import httpx
+from dotenv import load_dotenv
 from openai import OpenAI
 
+from server.env import ContentModerationEnv
 from server.logic import DEFAULT_CASE_IDS
-from dotenv import load_dotenv
+from server.models import Action
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 load_dotenv()
 
-ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://127.0.0.1:8000")
-API_BASE_URL = os.getenv("API_BASE_URL")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
 HF_TOKEN = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+
+TASK_NAME = os.getenv("MODERATION_CASE", DEFAULT_CASE_IDS[0])
+BENCHMARK = os.getenv("BENCHMARK", "openenv-multimodal-moderation")
+MAX_STEPS = 5
+MAX_TOTAL_REWARD = 1.6
+SUCCESS_SCORE_THRESHOLD = 0.5
 OUTPUT_DIR = Path("outputs")
 
-
-@dataclass
-class EpisodeResult:
-    case_id: str
-    total_reward: float
-    final_action: str | None
-    expected_action: str | None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "case_id": self.case_id,
-            "total_reward": self.total_reward,
-            "final_action": self.final_action,
-            "expected_action": self.expected_action,
-        }
+SYSTEM_PROMPT = (
+    "You are a precise multimodal content moderation agent. "
+    "Return only a JSON object with keys action_type and reason. "
+    "Allowed action_type values: allow, flag, remove, escalate."
+)
 
 
-def llm_action(client: OpenAI, observation: dict[str, Any]) -> dict[str, str]:
-    prompt = {
-        "task": "Return a JSON object with keys action_type and reason.",
-        "allowed_actions": ["allow", "flag", "remove", "escalate"],
-        "current_step": observation["step_type"],
-        "content": observation["content"],
-        "policy": observation.get("policy", []),
-        "metadata": observation.get("metadata", {}),
-    }
+def one_line(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
+    error_val = one_line(error) if error else "null"
+    done_val = str(done).lower()
+    print(
+        f"[STEP] step={step} action={one_line(action)} reward={reward:.2f} done={done_val} error={error_val}",
+        flush=True,
+    )
+
+
+def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
+    rewards_str = ",".join(f"{reward:.2f}" for reward in rewards)
+    print(
+        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        flush=True,
+    )
+
+
+def build_user_prompt(observation: dict, step: int) -> str:
+    return json.dumps(
+        {
+            "step": step,
+            "step_type": observation["step_type"],
+            "content": observation["content"],
+            "policy": observation.get("policy", []),
+            "metadata": observation.get("metadata", {}),
+        },
+        ensure_ascii=False,
+    )
+
+
+def get_model_action(client: OpenAI, observation: dict, step: int) -> Action:
     response = client.chat.completions.create(
         model=MODEL_NAME,
         temperature=0,
+        max_tokens=200,
         response_format={"type": "json_object"},
         messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a precise content moderation agent. Follow policy, use the "
-                    "available evidence, and respond with only valid JSON."
-                    "Response format example: {\"action_type\": \"allow\", \"reason\": \"The content does not violate any policies.\"}"
-                ),
-            },
-            {"role": "user", "content": json.dumps(prompt)},
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": build_user_prompt(observation, step)},
         ],
     )
-    # print(f"LLM raw response: {response}")
     raw = response.choices[0].message.content or "{}"
-    data = json.loads(raw)
-    # print(f"LLM response: {data}")
-    return {
-        "action_type": data["action_type"],
-        "reason": data["reason"],
-    }
-
-
-def run_episode(http: httpx.Client, llm: OpenAI, case_id: str) -> EpisodeResult:
-    reset_response = http.post("/reset", json={"case_id": case_id})
-    reset_response.raise_for_status()
-    payload = reset_response.json()
-    observation = payload["observation"]
-    done = bool(payload.get("done", False))
-
-    while not done:
-        action = llm_action(llm, observation)
-        step_response = http.post("/step", json={"action": action})
-        step_response.raise_for_status()
-        payload = step_response.json()
-        observation = payload["observation"]
-        done = bool(payload.get("done", False))
-
-    summary_response = http.get("/episode_summary")
-    summary_response.raise_for_status()
-    summary = summary_response.json()
-    return EpisodeResult(
-        case_id=case_id,
-        total_reward=float(summary.get("total_reward", 0.0)),
-        final_action=summary.get("final_action"),
-        expected_action=summary.get("expected_action"),
+    payload = json.loads(raw)
+    return Action(
+        action_type=payload["action_type"],
+        reason=payload["reason"],
     )
+
+
+def save_results(
+    rewards: list[float],
+    score: float,
+    success: bool,
+    steps: int,
+    last_action: str,
+    last_error: Optional[str],
+) -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = OUTPUT_DIR / f"inference_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    payload = {
+        "generated_at": datetime.now().isoformat(),
+        "task": TASK_NAME,
+        "benchmark": BENCHMARK,
+        "model_name": MODEL_NAME,
+        "api_base_url": API_BASE_URL,
+        "local_image_name": LOCAL_IMAGE_NAME,
+        "success": success,
+        "steps": steps,
+        "score": score,
+        "rewards": rewards,
+        "last_action": last_action,
+        "last_error": last_error,
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def main() -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    llm = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
-    results: list[EpisodeResult] = []
-    with httpx.Client(base_url=ENV_BASE_URL, timeout=60.0) as http:
-        for case_id in DEFAULT_CASE_IDS:
-            results.append(run_episode(http, llm, case_id))
-            print(f"Completed case_id={case_id} with total_reward={results[-1].total_reward:.3f}")
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    env = ContentModerationEnv()
 
-    aggregate = sum(result.total_reward for result in results)
-    output_payload = {
-        "generated_at": datetime.now().isoformat(),
-        "env_base_url": ENV_BASE_URL,
-        "api_base_url": API_BASE_URL,
-        "model_name": MODEL_NAME,
-        "episodes": len(results),
-        "aggregate_reward": aggregate,
-        "average_reward": aggregate / len(results) if results else 0.0,
-        "results": [result.to_dict() for result in results],
-    }
-    output_path = OUTPUT_DIR / f"inference_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    output_path.write_text(json.dumps(output_payload, indent=2), encoding="utf-8")
+    rewards: list[float] = []
+    steps_taken = 0
+    score = 0.0
+    success = False
+    last_error: Optional[str] = None
+    last_action_str = "null"
 
-    for result in results:
-        print(
-            f"case_id={result.case_id} total_reward={result.total_reward:.3f} "
-            f"final_action={result.final_action} expected_action={result.expected_action}"
+    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+
+    try:
+        observation = env.reset(case_id=TASK_NAME).model_dump()
+
+        for step in range(1, MAX_STEPS + 1):
+            if observation.get("done", False):
+                break
+
+            action = get_model_action(client, observation, step)
+            last_action_str = f"{action.action_type.value}('{one_line(action.reason)}')"
+
+            try:
+                step_observation = env.step(action)
+                reward = float(step_observation.reward or 0.0)
+                done = bool(step_observation.done)
+                last_error = None
+                rewards.append(reward)
+                steps_taken = step
+                observation = step_observation.model_dump()
+                log_step(
+                    step=step,
+                    action=last_action_str,
+                    reward=reward,
+                    done=done,
+                    error=last_error,
+                )
+                if done:
+                    break
+            except Exception as exc:
+                last_error = str(exc)
+                break
+
+        total_reward = sum(rewards)
+        score = min(max(total_reward / MAX_TOTAL_REWARD, 0.0), 1.0)
+        success = score >= SUCCESS_SCORE_THRESHOLD and last_error is None
+    finally:
+        try:
+            env.close()
+        except Exception:
+            pass
+        save_results(
+            rewards=rewards,
+            score=score,
+            success=success,
+            steps=steps_taken,
+            last_action=last_action_str,
+            last_error=last_error,
         )
-    print(f"episodes={len(results)} aggregate_reward={aggregate:.3f} average_reward={aggregate / len(results):.3f}")
-    print(f"Saved results to {output_path}")
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 if __name__ == "__main__":
