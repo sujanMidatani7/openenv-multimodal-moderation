@@ -88,15 +88,9 @@ Persistent `state_data` stores:
 - reviewer agreement: `+0.2`
 - unsafe allow on risky content: `-0.6`
 
-## RAG
+## Policy Retrieval
 
-The retriever uses:
-
-- `sentence-transformers/all-MiniLM-L6-v2`
-- `FAISS IndexFlatIP`
-- top-`k=3` retrieval over curated moderation policy chunks
-
-The model loader prefers the local Hugging Face cache and uses `local_files_only=True` to avoid runtime downloads.
+The retriever loads curated moderation policies from `server/rag/policies.json` and ranks them with a lightweight keyword-overlap scorer. This keeps startup deterministic, avoids runtime model downloads, and eliminates noisy encoder logs during evaluation.
 
 ## Install
 
@@ -173,9 +167,9 @@ python inference.py
 
 Notes:
 
-- the script iterates through all built-in cases
-- it prints per-case reward plus aggregate score
-- the current default `MODEL_NAME` in code is `llama-3.1-8b-instant`
+- the script runs one task per invocation and emits strict `[START]`, `[STEP]`, and `[END]` lines
+- task selection and grading are aligned with the built-in moderation cases
+- the current default `MODEL_NAME` in code is only used when your environment configuration provides one
 
 ## Docker
 
@@ -207,5 +201,5 @@ docker run -it -p 7860:7860 --platform=linux/amd64 \
 
 - designed for `<= 2 vCPU`
 - designed for `<= 8 GB RAM`
-- small encoder only
+- lightweight JSON-backed retrieval only
 - deterministic case selection when `seed` is provided

@@ -4,13 +4,11 @@ COPY --from=ghcr.io/astral-sh/uv:0.6.14 /uv /uvx /bin/
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV SENTENCE_TRANSFORMERS_HOME=/opt/models
 
 WORKDIR /workspace
 
 COPY server/requirements.txt ./requirements.txt
 RUN uv pip install --system --no-cache -r requirements.txt
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', cache_folder='/opt/models')"
 
 COPY server ./server
 COPY client.py ./client.py

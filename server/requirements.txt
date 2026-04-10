@@ -2,9 +2,6 @@ fastapi
 uvicorn[standard]
 openenv-core
 pydantic
-faiss-cpu
-sentence-transformers
-numpy
 openai
 httpx
 pyyaml

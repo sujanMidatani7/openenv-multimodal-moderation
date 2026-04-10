@@ -28,9 +28,9 @@ models:
       episode_id: string
       step_count: integer
       done: boolean
-rag:
-  encoder: sentence-transformers/all-MiniLM-L6-v2
-  index: faiss
+policy_retrieval:
+  source: server/rag/policies.json
+  strategy: keyword_overlap
   top_k: 3
 rewards:
   analysis_step: 0.2
