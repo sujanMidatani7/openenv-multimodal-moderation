@@ -41,6 +41,8 @@ def attach_server_routes(app: FastAPI, env: ContentModerationEnv) -> FastAPI:
         checks = run_grader_checks()
         return {
             "checks": checks,
+            "task_count": len(checks),
+            "graded_task_count": sum(1 for item in checks if item.get("has_grader")),
             "all_scores_in_range": all(item["score_range_ok"] for item in checks),
         }
 

@@ -106,6 +106,12 @@ CASES: list[ModerationCase] = [
 
 DEFAULT_CASE_IDS = [case.case_id for case in CASES]
 MAX_EPISODE_REWARD = 1.6
+MIN_STRICT_SCORE = 0.01
+MAX_STRICT_SCORE = 0.99
+
+
+def normalize_strict_score(raw_score: float) -> float:
+    return min(max(raw_score, MIN_STRICT_SCORE), MAX_STRICT_SCORE)
 
 TASKS = {
     case.case_id: {
@@ -114,6 +120,14 @@ TASKS = {
         "policy_hint": case.policy_hint,
         "severity": case.severity,
         "expected_action": case.expected_action.value,
+        "grader": {
+            "name": "normalized_episode_reward",
+            "score_range": {
+                "min": MIN_STRICT_SCORE,
+                "max": MAX_STRICT_SCORE,
+            },
+            "passing_score": 0.75,
+        },
     }
     for case in CASES
 }
@@ -248,29 +262,31 @@ def next_step(step_type: StepType) -> StepType | None:
     return STEP_SEQUENCE[idx + 1]
 
 
-def enumerate_tasks() -> list[dict[str, str]]:
+def enumerate_tasks() -> list[dict[str, Any]]:
     return [TASKS[task_id] for task_id in DEFAULT_CASE_IDS]
 
 
 def grade_episode_summary(summary: dict[str, Any]) -> float:
     total_reward = float(summary.get("total_reward", 0.0))
     score = total_reward / MAX_EPISODE_REWARD if MAX_EPISODE_REWARD > 0 else 0.0
-    return min(max(score, 0.0), 1.0)
+    return normalize_strict_score(score)
 
 
 def run_grader_checks() -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
     for case in CASES:
-        ideal_total = MAX_EPISODE_REWARD
-        ideal_score = grade_episode_summary({"total_reward": ideal_total})
-        low_score = grade_episode_summary({"total_reward": -1.0})
+        strong_total = MAX_EPISODE_REWARD * 0.9
+        weak_total = MAX_EPISODE_REWARD * 0.2
+        strong_score = grade_episode_summary({"total_reward": strong_total})
+        weak_score = grade_episode_summary({"total_reward": weak_total})
         checks.append(
             {
                 "task": case.case_id,
-                "reward_range_ok": 0.0 <= ideal_total,
-                "ideal_score": ideal_score,
-                "low_score": low_score,
-                "score_range_ok": 0.0 <= ideal_score <= 1.0 and 0.0 <= low_score <= 1.0,
+                "has_grader": "grader" in TASKS[case.case_id],
+                "reward_range_ok": 0.0 < weak_total < strong_total < MAX_EPISODE_REWARD,
+                "strong_score": strong_score,
+                "weak_score": weak_score,
+                "score_range_ok": 0.0 < strong_score < 1.0 and 0.0 < weak_score < 1.0,
             }
         )
     return checks
