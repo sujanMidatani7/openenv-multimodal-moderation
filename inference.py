@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from server.env import ContentModerationEnv
-from server.logic import DEFAULT_CASE_IDS
+from server.logic import DEFAULT_CASE_IDS, enumerate_tasks, grade_episode_summary, run_grader_checks
 from server.models import Action
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -27,10 +27,9 @@ MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
 HF_TOKEN = os.getenv("HF_TOKEN")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
-TASK_NAME = os.getenv("MODERATION_CASE", DEFAULT_CASE_IDS[0])
+TASK_NAME = os.getenv("TASK_NAME") or os.getenv("MODERATION_CASE", DEFAULT_CASE_IDS[0])
 BENCHMARK = os.getenv("BENCHMARK", "openenv-multimodal-moderation")
 MAX_STEPS = 5
-MAX_TOTAL_REWARD = 1.6
 SUCCESS_SCORE_THRESHOLD = 0.5
 OUTPUT_DIR = Path("outputs")
 
@@ -61,7 +60,7 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
 def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
     rewards_str = ",".join(f"{reward:.2f}" for reward in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -121,11 +120,23 @@ def save_results(
         "rewards": rewards,
         "last_action": last_action,
         "last_error": last_error,
+        "tasks": enumerate_tasks(),
+        "grader_checks": run_grader_checks(),
     }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def main() -> None:
+    missing = [name for name, value in {
+        "API_BASE_URL": API_BASE_URL,
+        "MODEL_NAME": MODEL_NAME,
+        "HF_TOKEN": HF_TOKEN,
+    }.items() if not value]
+    if missing:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+    if TASK_NAME not in DEFAULT_CASE_IDS:
+        raise RuntimeError(f"Unknown TASK_NAME '{TASK_NAME}'. Valid tasks: {', '.join(DEFAULT_CASE_IDS)}")
+
     client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
     env = ContentModerationEnv()
 
@@ -170,7 +181,7 @@ def main() -> None:
                 break
 
         total_reward = sum(rewards)
-        score = min(max(total_reward / MAX_TOTAL_REWARD, 0.0), 1.0)
+        score = grade_episode_summary({"total_reward": total_reward})
         success = score >= SUCCESS_SCORE_THRESHOLD and last_error is None
     finally:
         try:

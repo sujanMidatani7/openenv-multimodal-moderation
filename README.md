@@ -1,6 +1,5 @@
 ---
 title: OpenEnv Multimodal Moderation Environment
-emoji: 🛡️
 colorFrom: blue
 colorTo: green
 sdk: docker

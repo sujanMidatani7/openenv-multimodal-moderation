@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from server.logic import DEFAULT_CASE_IDS
+from server.logic import DEFAULT_CASE_IDS, enumerate_tasks, run_grader_checks
 from server.env import ContentModerationEnv
 
 
@@ -31,5 +31,17 @@ def attach_server_routes(app: FastAPI, env: ContentModerationEnv) -> FastAPI:
     @app.get("/cases")
     def list_cases() -> dict:
         return {"case_ids": DEFAULT_CASE_IDS}
+
+    @app.get("/tasks")
+    def list_tasks() -> dict:
+        return {"tasks": enumerate_tasks()}
+
+    @app.get("/grader_checks")
+    def grader_checks() -> dict:
+        checks = run_grader_checks()
+        return {
+            "checks": checks,
+            "all_scores_in_range": all(item["score_range_ok"] for item in checks),
+        }
 
     return app

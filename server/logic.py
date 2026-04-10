@@ -105,6 +105,18 @@ CASES: list[ModerationCase] = [
 ]
 
 DEFAULT_CASE_IDS = [case.case_id for case in CASES]
+MAX_EPISODE_REWARD = 1.6
+
+TASKS = {
+    case.case_id: {
+        "task_name": case.case_id,
+        "benchmark": "openenv-multimodal-moderation",
+        "policy_hint": case.policy_hint,
+        "severity": case.severity,
+        "expected_action": case.expected_action.value,
+    }
+    for case in CASES
+}
 
 
 def build_retriever() -> PolicyRetriever:
@@ -234,3 +246,31 @@ def next_step(step_type: StepType) -> StepType | None:
     if idx + 1 >= len(STEP_SEQUENCE):
         return None
     return STEP_SEQUENCE[idx + 1]
+
+
+def enumerate_tasks() -> list[dict[str, str]]:
+    return [TASKS[task_id] for task_id in DEFAULT_CASE_IDS]
+
+
+def grade_episode_summary(summary: dict[str, Any]) -> float:
+    total_reward = float(summary.get("total_reward", 0.0))
+    score = total_reward / MAX_EPISODE_REWARD if MAX_EPISODE_REWARD > 0 else 0.0
+    return min(max(score, 0.0), 1.0)
+
+
+def run_grader_checks() -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    for case in CASES:
+        ideal_total = MAX_EPISODE_REWARD
+        ideal_score = grade_episode_summary({"total_reward": ideal_total})
+        low_score = grade_episode_summary({"total_reward": -1.0})
+        checks.append(
+            {
+                "task": case.case_id,
+                "reward_range_ok": 0.0 <= ideal_total,
+                "ideal_score": ideal_score,
+                "low_score": low_score,
+                "score_range_ok": 0.0 <= ideal_score <= 1.0 and 0.0 <= low_score <= 1.0,
+            }
+        )
+    return checks
