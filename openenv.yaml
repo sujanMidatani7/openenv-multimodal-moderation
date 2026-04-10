@@ -32,6 +32,17 @@ policy_retrieval:
   source: server/rag/policies.json
   strategy: keyword_overlap
   top_k: 3
+tasks:
+  - name: violence-remove
+    grader: normalized_episode_reward
+  - name: nudity-flag
+    grader: normalized_episode_reward
+  - name: harassment-flag
+    grader: normalized_episode_reward
+  - name: misinfo-escalate
+    grader: normalized_episode_reward
+  - name: benign-allow
+    grader: normalized_episode_reward
 rewards:
   analysis_step: 0.2
   retrieval_step: 0.2
