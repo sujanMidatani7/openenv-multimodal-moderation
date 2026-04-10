@@ -9,12 +9,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
+from dotenv import load_dotenv
 from openai import OpenAI
 
-from server.env import ContentModerationEnv
+from client import ModerationEnv, ModerationEnvAction
 from server.logic import DEFAULT_CASE_IDS, grade_episode_summary
-from server.models import Action
-from dotenv import load_dotenv
+
 load_dotenv()
 
 IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
@@ -112,7 +112,7 @@ def rule_based_decision(text: str, image_metadata: dict) -> str:
     return "allow"
 
 
-def fallback_action(observation: dict) -> Action:
+def fallback_action(observation: dict) -> ModerationEnvAction:
     text, image_metadata = extract_text_and_metadata(observation)
     step_type = str(observation.get("step_type", "analyze"))
     reviewer_note = observation.get("metadata", {}).get("reviewer_note") or {}
@@ -122,13 +122,13 @@ def fallback_action(observation: dict) -> Action:
     else:
         action_type = rule_based_decision(text, image_metadata)
 
-    return Action(
+    return ModerationEnvAction(
         action_type=action_type,
         reason=STEP_REASON_TEMPLATES.get(step_type, "Used deterministic fallback moderation logic."),
     )
 
 
-def parse_model_action(raw: str) -> Action:
+def parse_model_action(raw: str) -> ModerationEnvAction:
     payload = json.loads(raw)
     action_type = str(payload.get("action_type", "")).strip().lower()
     reason = one_line(str(payload.get("reason", "")).strip())
@@ -136,10 +136,10 @@ def parse_model_action(raw: str) -> Action:
         raise ValueError("invalid action_type")
     if not reason:
         raise ValueError("empty reason")
-    return Action(action_type=action_type, reason=reason)
+    return ModerationEnvAction(action_type=action_type, reason=reason)
 
 
-def get_model_action(client: OpenAI, step: int, observation: dict, history: List[str]) -> Action:
+def get_model_action(client: OpenAI, step: int, observation: dict, history: List[str]) -> ModerationEnvAction:
     user_prompt = build_user_prompt(step, observation, history)
     try:
         completion = client.chat.completions.create(
@@ -191,7 +191,7 @@ def save_results(
 
 async def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-    env = ContentModerationEnv()
+    env: Optional[ModerationEnv] = None
 
     history: List[str] = []
     rewards: List[float] = []
@@ -201,14 +201,15 @@ async def main() -> None:
     last_action = "null"
     last_error: Optional[str] = None
 
-    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
-
     try:
+        env = await ModerationEnv.from_docker_image(IMAGE_NAME)
+        log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+
         if TASK_NAME not in DEFAULT_CASE_IDS:
             raise RuntimeError(f"unknown task {TASK_NAME}")
 
-        result = env.reset(case_id=TASK_NAME)
-        observation = result.model_dump()
+        result = await env.reset(case_id=TASK_NAME)
+        observation = result.observation.model_dump()
 
         for step in range(1, MAX_STEPS + 1):
             if result.done:
@@ -218,8 +219,8 @@ async def main() -> None:
             last_action = f"{action.action_type.value}('{one_line(action.reason)}')"
 
             try:
-                result = env.step(action)
-                observation = result.model_dump()
+                result = await env.step(action)
+                observation = result.observation.model_dump()
                 reward = float(result.reward or 0.0)
                 done = bool(result.done)
                 error = None
@@ -243,9 +244,12 @@ async def main() -> None:
 
     finally:
         try:
-            env.close()
+            if env is not None:
+                await env.close()
         except Exception:
             pass
+        if env is None:
+            log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
         save_results(
             rewards=rewards,
             score=score,
