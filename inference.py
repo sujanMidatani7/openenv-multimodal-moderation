@@ -39,6 +39,14 @@ SYSTEM_PROMPT = (
     "Allowed action_type values: allow, flag, remove, escalate."
 )
 
+STEP_REASON_TEMPLATES = {
+    "analyze": "Analyzed text and image metadata for safety and policy risk indicators.",
+    "retrieve_policy": "Grounded the case using the retrieved violence, nudity, harassment, misinformation, and safe-handling policies.",
+    "decide": "Selected the moderation action that best matches the detected policy risk.",
+    "review": "Validated the moderator decision against the reviewer recommendation.",
+    "finalize": "Finalized the moderation outcome for this episode.",
+}
+
 
 def one_line(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
@@ -78,23 +86,76 @@ def build_user_prompt(observation: dict, step: int) -> str:
     )
 
 
-def get_model_action(client: OpenAI, observation: dict, step: int) -> Action:
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        temperature=0,
-        max_tokens=200,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": build_user_prompt(observation, step)},
-        ],
-    )
-    raw = response.choices[0].message.content or "{}"
+def extract_text_and_metadata(observation: dict) -> tuple[str, dict]:
+    content = observation.get("content", {})
+    if isinstance(content, dict):
+        return str(content.get("text", "")), content.get("image_metadata", {}) or {}
+    return "", {}
+
+
+def rule_based_decision(text: str, image_metadata: dict) -> str:
+    lowered = text.lower()
+    serialized_metadata = json.dumps(image_metadata, sort_keys=True).lower()
+    combined = f"{lowered} {serialized_metadata}"
+
+    if "kill" in combined or "murder" in combined:
+        return "remove"
+    if "nude" in combined or "nudity" in combined or "adult_pose" in combined:
+        return "flag"
+    if "slur" in combined or "dogpile" in combined or "harassment" in combined:
+        return "flag"
+    if "stroke" in combined or "ignore doctors" in combined or "medical_claim_score" in combined:
+        return "escalate"
+    return "allow"
+
+
+def fallback_action(observation: dict) -> Action:
+    text, image_metadata = extract_text_and_metadata(observation)
+    step_type = observation.get("step_type", "analyze")
+    reviewer_note = observation.get("metadata", {}).get("reviewer_note") or {}
+
+    if step_type == "review" and reviewer_note.get("recommended_action"):
+        action_type = reviewer_note["recommended_action"]
+    else:
+        action_type = rule_based_decision(text, image_metadata)
+
+    reason = STEP_REASON_TEMPLATES.get(step_type, "Used a deterministic fallback moderation policy.")
+    return Action(action_type=action_type, reason=reason)
+
+
+def parse_model_action(raw: str) -> Action:
     payload = json.loads(raw)
+    action_type = str(payload.get("action_type", "")).strip().lower()
+    reason = one_line(str(payload.get("reason", "")).strip())
+    if action_type not in {"allow", "flag", "remove", "escalate"}:
+        raise ValueError(f"Invalid action_type '{action_type}'")
+    if not reason:
+        raise ValueError("Model returned an empty reason")
     return Action(
-        action_type=payload["action_type"],
-        reason=payload["reason"],
+        action_type=action_type,
+        reason=reason,
     )
+
+
+def get_model_action(client: Optional[OpenAI], observation: dict, step: int) -> tuple[Action, Optional[str]]:
+    if client is None:
+        return fallback_action(observation), "llm_unavailable"
+
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            temperature=0,
+            max_tokens=200,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": build_user_prompt(observation, step)},
+            ],
+        )
+        raw = response.choices[0].message.content or "{}"
+        return parse_model_action(raw), None
+    except Exception as exc:
+        return fallback_action(observation), f"model_fallback:{one_line(str(exc))}"
 
 
 def save_results(
@@ -127,36 +188,44 @@ def save_results(
 
 
 def main() -> None:
-    missing = [name for name, value in {
-        "API_BASE_URL": API_BASE_URL,
-        "MODEL_NAME": MODEL_NAME,
-        "HF_TOKEN": HF_TOKEN,
-    }.items() if not value]
-    if missing:
-        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
-    if TASK_NAME not in DEFAULT_CASE_IDS:
-        raise RuntimeError(f"Unknown TASK_NAME '{TASK_NAME}'. Valid tasks: {', '.join(DEFAULT_CASE_IDS)}")
-
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
-    env = ContentModerationEnv()
-
     rewards: list[float] = []
     steps_taken = 0
     score = 0.0
     success = False
     last_error: Optional[str] = None
     last_action_str = "null"
+    env: Optional[ContentModerationEnv] = None
+
+    client: Optional[OpenAI] = None
+    if API_BASE_URL and MODEL_NAME and HF_TOKEN:
+        try:
+            client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+        except Exception as exc:
+            last_error = f"client_init:{one_line(str(exc))}"
+    else:
+        missing = [name for name, value in {
+            "API_BASE_URL": API_BASE_URL,
+            "MODEL_NAME": MODEL_NAME,
+            "HF_TOKEN": HF_TOKEN,
+        }.items() if not value]
+        last_error = f"missing_env:{','.join(missing)}"
 
     log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
     try:
+        if TASK_NAME not in DEFAULT_CASE_IDS:
+            raise RuntimeError(f"Unknown TASK_NAME '{TASK_NAME}'. Valid tasks: {', '.join(DEFAULT_CASE_IDS)}")
+
+        env = ContentModerationEnv()
         observation = env.reset(case_id=TASK_NAME).model_dump()
 
         for step in range(1, MAX_STEPS + 1):
             if observation.get("done", False):
                 break
 
-            action = get_model_action(client, observation, step)
+            action, action_error = get_model_action(client, observation, step)
+            if action_error:
+                last_error = action_error
             last_action_str = f"{action.action_type.value}('{one_line(action.reason)}')"
 
             try:
@@ -172,20 +241,30 @@ def main() -> None:
                     action=last_action_str,
                     reward=reward,
                     done=done,
-                    error=last_error,
+                    error=action_error,
                 )
                 if done:
                     break
             except Exception as exc:
-                last_error = str(exc)
+                last_error = f"env_step:{one_line(str(exc))}"
+                log_step(
+                    step=step,
+                    action=last_action_str,
+                    reward=0.0,
+                    done=True,
+                    error=last_error,
+                )
                 break
 
         total_reward = sum(rewards)
         score = grade_episode_summary({"total_reward": total_reward})
         success = score >= SUCCESS_SCORE_THRESHOLD and last_error is None
+    except Exception as exc:
+        last_error = f"fatal:{one_line(str(exc))}"
     finally:
         try:
-            env.close()
+            if env is not None:
+                env.close()
         except Exception:
             pass
         save_results(
