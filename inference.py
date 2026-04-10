@@ -24,7 +24,7 @@ load_dotenv()
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-HF_TOKEN = os.getenv("HF_TOKEN")
+HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
 TASK_NAME = os.getenv("TASK_NAME") or os.getenv("MODERATION_CASE", DEFAULT_CASE_IDS[0])
@@ -155,6 +155,7 @@ def get_model_action(client: Optional[OpenAI], observation: dict, step: int) -> 
         raw = response.choices[0].message.content or "{}"
         return parse_model_action(raw), None
     except Exception as exc:
+        raise
         return fallback_action(observation), f"model_fallback:{one_line(str(exc))}"
 
 
