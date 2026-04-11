@@ -1,14 +1,3 @@
-"""
-server/app.py
-
-Plain FastAPI server with a single persistent ModerationEnvironment instance.
-We deliberately do NOT use create_fastapi_app / create_app because those helpers
-spin up a fresh env per-request (HTTP mode) or per-websocket (WS mode), which
-breaks our stateful multi-step episode flow.
-
-All routes share the module-level _env singleton so reset() state carries
-through to step() calls.
-"""
 from __future__ import annotations
 
 import traceback

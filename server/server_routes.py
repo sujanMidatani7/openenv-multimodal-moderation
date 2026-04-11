@@ -1,8 +1,3 @@
-"""
-server_routes.py
-Extra HTTP routes mounted onto the FastAPI app in app.py.
-Kept here so app.py stays small and routes are easy to find.
-"""
 from __future__ import annotations
 
 from fastapi import APIRouter
