@@ -13,7 +13,7 @@ def register_routes(app, env) -> None:
     async def episode_summary() -> JSONResponse:
         state = env.state
         breakdown = state.reward_breakdown or {}
-        total_reward = round(sum(breakdown.values()), 4)
+        total_reward = max(0.01, min(0.99, float(sum(breakdown.values()))))
         return JSONResponse({
             "episode_id": state.episode_id,
             "step_count": state.step_count,
