@@ -34,15 +34,44 @@ policy_retrieval:
   top_k: 3
 tasks:
   - name: violence-remove
-    grader: normalized_episode_reward
+    description: Agent must identify violent content and issue a remove action
+    grader:
+      type: reward_threshold
+      threshold: 0.5
+      endpoint: /episode_summary
+      reward_field: total_reward
+ 
   - name: nudity-flag
-    grader: normalized_episode_reward
+    description: Agent must identify nudity/sexual content and issue a flag action
+    grader:
+      type: reward_threshold
+      threshold: 0.5
+      endpoint: /episode_summary
+      reward_field: total_reward
+ 
   - name: harassment-flag
-    grader: normalized_episode_reward
+    description: Agent must identify harassment and issue a flag action
+    grader:
+      type: reward_threshold
+      threshold: 0.5
+      endpoint: /episode_summary
+      reward_field: total_reward
+ 
   - name: misinfo-escalate
-    grader: normalized_episode_reward
+    description: Agent must identify misinformation and escalate for review
+    grader:
+      type: reward_threshold
+      threshold: 0.5
+      endpoint: /episode_summary
+      reward_field: total_reward
+ 
   - name: benign-allow
-    grader: normalized_episode_reward
+    description: Agent must correctly allow benign/safe content
+    grader:
+      type: reward_threshold
+      threshold: 0.5
+      endpoint: /episode_summary
+      reward_field: total_reward
 rewards:
   analysis_step: 0.2
   retrieval_step: 0.2

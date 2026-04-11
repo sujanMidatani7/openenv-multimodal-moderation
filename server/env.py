@@ -1,197 +1,173 @@
 from __future__ import annotations
 
-from typing import Any
+import uuid
+from typing import Any, Dict, Optional
 
 from openenv.core.env_server.interfaces import Environment
 
-from server.logic import (
-    EpisodeContext,
-    build_query,
-    build_retriever,
-    compute_step_reward,
-    convert_chunks,
-    infer_rule_override,
-    new_episode,
-    next_step,
-    reviewer_recommendation,
-)
-from server.models import Action, Content, Observation, PolicyChunk, State, StepType
+try:
+    from .models import Action, ActionType, Content, Observation, PolicyChunk, State, StepType
+    from .logic import (
+        CASE_IDS,
+        get_case,
+        get_expected_action,
+        compute_step_reward,
+    )
+    from .rag.retriever import retrieve_policy_chunks
+except ImportError:
+    from models import Action, ActionType, Content, Observation, PolicyChunk, State, StepType
+    from logic import (
+        CASE_IDS,
+        get_case,
+        get_expected_action,
+        compute_step_reward,
+    )
+    from rag.retriever import retrieve_policy_chunks
 
 
-class ContentModerationEnv(Environment[Action, Observation, State]):
+# Episode step flow — each step() call advances to the next stage
+EPISODE_FLOW = ["analyze", "retrieve_policy", "decide", "review", "finalize"]
+
+
+class ModerationEnvironment(Environment):
+    """OpenEnv environment for multimodal content moderation."""
+
     def __init__(self) -> None:
         super().__init__()
-        self._retriever = build_retriever()
-        self._episode: EpisodeContext | None = None
-        self.state_data: dict[str, Any] = {}
         self._state = State()
+        self._case: Optional[Dict[str, Any]] = None
+        self._current_step_index: int = 0
 
-    def reset(
-        self,
-        seed: int | None = None,
-        episode_id: str | None = None,
-        case_id: str | None = None,
-        **_: Any,
-    ) -> Observation:
-        self._episode = new_episode(seed=seed, episode_id=episode_id, case_id=case_id)
-        case = self._episode.case
-        self.state_data = {
-            "case_id": case.case_id,
-            "content_text": case.content_text,
-            "image_metadata": case.image_metadata,
-            "expected_action": case.expected_action.value,
-            "reviewer_action": case.reviewer_action.value,
-            "history": [],
-            "policy_chunks": [],
-            "reviewer_note": None,
-            "final_action": None,
-            "reward_breakdown": [],
-        }
+    # ------------------------------------------------------------------
+    # OpenEnv interface
+    # ------------------------------------------------------------------
+
+    def reset(self, seed: Optional[int] = None, episode_id: Optional[str] = None, **kwargs) -> Observation:
+        eid = episode_id or str(uuid.uuid4())
+
+        # Determine which case to use
+        # Allow caller to pass case_id via kwargs (used by inference.py)
+        case_id = kwargs.get("case_id")
+        if case_id and case_id in CASE_IDS:
+            chosen_id = case_id
+        elif seed is not None:
+            chosen_id = CASE_IDS[seed % len(CASE_IDS)]
+        else:
+            import random
+            chosen_id = random.choice(CASE_IDS)
+
+        self._case = get_case(chosen_id)
+        self._current_step_index = 0
+
         self._state = State(
-            episode_id=self._episode.episode_id,
+            episode_id=eid,
             step_count=0,
             done=False,
-            current_step=StepType.ANALYZE,
-            state_data=self.state_data,
-            total_reward=0.0,
+            selected_case_id=chosen_id,
+            reward_breakdown={
+                "analysis_step": 0.0,
+                "retrieval_step": 0.0,
+                "correct_decision": 0.0,
+                "reviewer_agreement": 0.0,
+                "unsafe_penalty": 0.0,
+            },
+            final_action=None,
+            reviewer_note=None,
+            action_history=[],
+            retrieved_policy_chunks=[],
         )
-        return self._build_observation(step_type=StepType.ANALYZE, reward=None, done=False)
 
-    def step(
-        self,
-        action: Action,
-        timeout_s: float | None = None,
-        **_: Any,
-    ) -> Observation:
-        del timeout_s
-        if self._episode is None:
-            raise RuntimeError("Environment not initialized. Call reset() before step().")
+        content = Content(**self._case["content"])
+        return Observation(
+            content=content,
+            policy=[],
+            step_type=StepType.analyze,
+            step_count=0,
+            message=f"Episode started. Case: {chosen_id}. Begin with analysis.",
+            reward=0.0,
+            done=False,
+        )
+
+    def step(self, action: Action, **kwargs) -> Observation:
+        if self._case is None:
+            raise RuntimeError("Call reset() before step()")
+
         if self._state.done:
-            raise RuntimeError("Episode already finished. Call reset() to start a new episode.")
-
-        current_step = self._state.current_step
-        self._state.step_count += 1
-        self.state_data["history"].append(
-            {
-                "step": current_step.value,
-                "action_type": action.action_type.value,
-                "reason": action.reason,
-            }
-        )
-
-        policy_chunks = self._policy_for_step(current_step, action.reason)
-        reviewer_action_value = None
-        if current_step == StepType.DECIDE:
-            reviewer_action_value, agrees, message = reviewer_recommendation(
-                self._episode.case,
-                action.action_type,
+            return Observation(
+                step_type=StepType.finalize,
+                step_count=self._state.step_count,
+                message="Episode already finished.",
+                reward=0.0,
+                done=True,
             )
-            self.state_data["reviewer_note"] = {
-                "recommended_action": reviewer_action_value.value,
-                "agrees_with_moderator": agrees,
-                "message": message,
-            }
 
-        if current_step == StepType.REVIEW:
-            self.state_data["final_action"] = action.action_type.value
-            reviewer_note = self.state_data.get("reviewer_note") or {}
-            recommended = reviewer_note.get("recommended_action")
-            if recommended is not None:
-                reviewer_action_value = action.action_type.__class__(recommended)
+        step_name = EPISODE_FLOW[self._current_step_index]
+        reward = compute_step_reward(step_name, action.action_type.value, self._case)
 
-        reward_value, reward_details, summary = compute_step_reward(
-            step_type=current_step,
-            action_type=action.action_type,
-            reason=action.reason,
-            case=self._episode.case,
-            policy=policy_chunks,
-            reviewer_action_value=reviewer_action_value,
-        )
-        self._state.total_reward += reward_value
-        self.state_data["reward_breakdown"].append(
-            {
-                "step": current_step.value,
-                "reward": reward_value,
-                "details": reward_details,
-                "summary": summary,
-            }
-        )
+        # Record reward into breakdown
+        breakdown = self._state.reward_breakdown
+        if step_name == "analyze":
+            breakdown["analysis_step"] += reward
+        elif step_name == "retrieve_policy":
+            breakdown["retrieval_step"] += reward
+        elif step_name == "decide":
+            if reward > 0:
+                breakdown["correct_decision"] += reward
+            else:
+                breakdown["unsafe_penalty"] += reward
+        elif step_name == "review":
+            breakdown["reviewer_agreement"] += reward
 
-        done = current_step == StepType.REVIEW
-        next_step_type = StepType.FINALIZE if done else next_step(current_step)
-        self._state.current_step = next_step_type or StepType.FINALIZE
+        # Record action history
+        self._state.action_history.append({
+            "step": step_name,
+            "action_type": action.action_type.value,
+            "reason": action.reason,
+            "reward": reward,
+        })
+
+        self._state.step_count += 1
+        self._current_step_index += 1
+
+        # Build observation for next step
+        policy_chunks: list[PolicyChunk] = []
+        message = ""
+        next_step_type = StepType.finalize
+
+        if step_name == "retrieve_policy":
+            # Actually retrieve now that we're done with retrieve_policy
+            raw_chunks = retrieve_policy_chunks(self._case["content"].get("text", ""), top_k=3)
+            policy_chunks = [PolicyChunk(**c) for c in raw_chunks]
+            self._state.retrieved_policy_chunks = policy_chunks
+            message = "Policy retrieved. Now make your moderation decision."
+        elif step_name == "analyze":
+            message = "Analysis complete. Retrieve relevant policy next."
+        elif step_name == "decide":
+            self._state.final_action = action.action_type.value
+            message = "Decision recorded. Awaiting reviewer validation."
+        elif step_name == "review":
+            self._state.reviewer_note = action.reason or "Reviewer note recorded."
+            message = "Review complete. Finalizing episode."
+        elif step_name == "finalize":
+            message = "Episode finalized."
+
+        done = self._current_step_index >= len(EPISODE_FLOW)
         self._state.done = done
-        self._state.state_data = self.state_data
 
-        return self._build_observation(
-            step_type=self._state.current_step,
-            reward=reward_value,
+        # Determine next step type for observation
+        if not done and self._current_step_index < len(EPISODE_FLOW):
+            next_step_type = StepType(EPISODE_FLOW[self._current_step_index])
+
+        return Observation(
+            content=Content(**self._case["content"]),
+            policy=policy_chunks or self._state.retrieved_policy_chunks,
+            step_type=next_step_type,
+            step_count=self._state.step_count,
+            message=message,
+            reward=reward,
             done=done,
-            reward_details=reward_details,
-            summary=summary,
         )
 
     @property
     def state(self) -> State:
         return self._state
-
-    def _policy_for_step(self, step_type: StepType, latest_reason: str) -> list[PolicyChunk]:
-        if self._episode is None:
-            return []
-        if step_type == StepType.ANALYZE:
-            query = build_query(self._episode.case, analysis_reason=latest_reason)
-            chunks = convert_chunks(self._retriever.retrieve(query=query, top_k=3))
-            self.state_data["policy_chunks"] = [chunk.model_dump() for chunk in chunks]
-            return chunks
-        stored = self.state_data.get("policy_chunks", [])
-        return [PolicyChunk(**chunk) for chunk in stored]
-
-    def _build_observation(
-        self,
-        step_type: StepType,
-        reward: float | None,
-        done: bool,
-        reward_details: dict[str, float | str] | None = None,
-        summary: str | None = None,
-    ) -> Observation:
-        policy = [PolicyChunk(**chunk) for chunk in self.state_data.get("policy_chunks", [])]
-        rule_override = infer_rule_override(self.state_data.get("content_text", ""))
-        metadata: dict[str, Any] = {
-            "episode_id": self._state.episode_id,
-            "case_id": self.state_data.get("case_id"),
-            "moderator_role": "decision step owner",
-            "reviewer_role": "validation step owner",
-            "rule_override": rule_override.value if rule_override else None,
-            "state_data": self.state_data,
-        }
-        if step_type == StepType.ANALYZE:
-            metadata["instruction"] = "Analyze text and image metadata for policy risk."
-        elif step_type == StepType.RETRIEVE_POLICY:
-            metadata["instruction"] = "Use the retrieved policy chunks to ground the moderation decision."
-        elif step_type == StepType.DECIDE:
-            metadata["instruction"] = "Choose the best moderation action for the case."
-        elif step_type == StepType.REVIEW:
-            metadata["instruction"] = "Validate the moderator decision against the reviewer signal."
-            metadata["reviewer_note"] = self.state_data.get("reviewer_note")
-        elif step_type == StepType.FINALIZE:
-            metadata["instruction"] = "Episode complete. Inspect the final moderation outcome and total score."
-            metadata["final_action"] = self.state_data.get("final_action")
-            metadata["total_reward"] = round(self._state.total_reward, 4)
-
-        if reward_details is not None:
-            metadata["latest_reward"] = reward_details
-        if summary is not None:
-            metadata["latest_reward_summary"] = summary
-
-        return Observation(
-            content=Content(
-                text=self.state_data.get("content_text", ""),
-                image_metadata=self.state_data.get("image_metadata", {}),
-            ),
-            policy=policy if step_type != StepType.ANALYZE else [],
-            step_type=step_type,
-            step_count=self._state.step_count,
-            done=done,
-            reward=reward,
-            metadata=metadata,
-        )

@@ -1,67 +1,68 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Any, Dict, List, Optional
 
-from openenv.core.env_server.types import Action as OpenEnvAction
-from openenv.core.env_server.types import Observation as OpenEnvObservation
-from openenv.core.env_server.types import State as OpenEnvState
 from pydantic import BaseModel, Field
 
 
 class ActionType(str, Enum):
-    ALLOW = "allow"
-    FLAG = "flag"
-    REMOVE = "remove"
-    ESCALATE = "escalate"
+    allow = "allow"
+    flag = "flag"
+    remove = "remove"
+    escalate = "escalate"
 
 
 class StepType(str, Enum):
-    ANALYZE = "analyze"
-    RETRIEVE_POLICY = "retrieve_policy"
-    DECIDE = "decide"
-    REVIEW = "review"
-    FINALIZE = "finalize"
+    analyze = "analyze"
+    retrieve_policy = "retrieve_policy"
+    decide = "decide"
+    review = "review"
+    finalize = "finalize"
 
 
 class Content(BaseModel):
-    text: str = Field(..., description="User-facing text content under review.")
-    image_metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Image metadata and derived signals available to the agent.",
-    )
+    text: str = ""
+    image_url: Optional[str] = None
+    image_description: Optional[str] = None
 
 
 class PolicyChunk(BaseModel):
-    chunk_id: str = Field(..., description="Unique chunk identifier.")
-    title: str = Field(..., description="Policy section title.")
-    text: str = Field(..., description="Retrieved policy passage.")
-    score: float = Field(..., description="Similarity score for this chunk.")
+    policy_id: str = ""
+    text: str = ""
+    score: float = 0.0
 
 
-class Action(OpenEnvAction):
-    action_type: ActionType = Field(..., description="Moderation action to take.")
-    reason: str = Field(..., min_length=8, description="Reason for the action.")
+class Action(BaseModel):
+    action_type: ActionType
+    reason: str = ""
 
 
-class Observation(OpenEnvObservation):
-    content: Content = Field(..., description="Content payload available at this step.")
-    policy: list[PolicyChunk] = Field(
-        default_factory=list,
-        description="Retrieved policy chunks relevant to the current case.",
+class Observation(BaseModel):
+    content: Optional[Content] = None
+    policy: List[PolicyChunk] = Field(default_factory=list)
+    step_type: StepType = StepType.analyze
+    step_count: int = 0
+    message: str = ""
+    reward: float = 0.0
+    done: bool = False
+
+
+class State(BaseModel):
+    episode_id: str = ""
+    step_count: int = 0
+    done: bool = False
+    selected_case_id: Optional[str] = None
+    reward_breakdown: Dict[str, float] = Field(
+        default_factory=lambda: {
+            "analysis_step": 0.0,
+            "retrieval_step": 0.0,
+            "correct_decision": 0.0,
+            "reviewer_agreement": 0.0,
+            "unsafe_penalty": 0.0,
+        }
     )
-    step_type: StepType = Field(..., description="Current workflow step.")
-    step_count: int = Field(..., ge=0, description="Number of actions taken so far.")
-
-
-class State(OpenEnvState):
-    done: bool = Field(default=False, description="Whether the episode has finished.")
-    current_step: StepType = Field(
-        default=StepType.ANALYZE,
-        description="Current step in the moderation workflow.",
-    )
-    state_data: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Persistent state accumulated across the episode.",
-    )
-    total_reward: float = Field(default=0.0, description="Cumulative episode reward.")
+    final_action: Optional[str] = None
+    reviewer_note: Optional[str] = None
+    action_history: List[Dict[str, Any]] = Field(default_factory=list)
+    retrieved_policy_chunks: List[PolicyChunk] = Field(default_factory=list)
