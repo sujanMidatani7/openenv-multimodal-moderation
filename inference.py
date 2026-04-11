@@ -1,266 +1,207 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
-import re
-import textwrap
-from datetime import datetime
-from pathlib import Path
-from typing import List, Optional
-
-from dotenv import load_dotenv
+import sys
+from typing import Any, Dict
+from typing import Any, Dict, List, Optional
+import requests
 from openai import OpenAI
-
-from client import ModerationEnv, ModerationEnvAction
-from server.logic import DEFAULT_CASE_IDS, grade_episode_summary
-
+from dotenv import load_dotenv
 load_dotenv()
 
-IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "registry.hf.space/sujanmidatani-openenv-multimodal-moderation:latest")
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-TASK_NAME = os.getenv("TASK_NAME", DEFAULT_CASE_IDS[0])
-BENCHMARK = os.getenv("BENCHMARK", "openenv-multimodal-moderation")
-MAX_STEPS = 8
-TEMPERATURE = 0.0
-MAX_TOKENS = 180
-SUCCESS_SCORE_THRESHOLD = 0.5
-MAX_TOTAL_REWARD = 1.6
-OUTPUT_DIR = Path("outputs")
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "https://sujanmidatani-openenv-multimodal-moderation.hf.space").rstrip("/")
+TASK_NAME    = os.environ.get("TASK_NAME", "violence-remove")
+BENCHMARK    = "openenv-multimodal-moderation"
+ 
+VALID_ACTIONS = ["allow", "flag", "remove", "escalate"]
+EPISODE_STEPS = ["analyze", "retrieve_policy", "decide", "review", "finalize"]
 
-SYSTEM_PROMPT = textwrap.dedent(
-    """
-    You are interacting with a multimodal content moderation environment.
-    Return exactly one JSON object with keys "action_type" and "reason".
-    Allowed action_type values are: allow, flag, remove, escalate.
-    Keep the reason concise and grounded in the observed content and policy.
-    """
-).strip()
+MAX_EPISODE_REWARD = 1.6
+ 
 
-STEP_REASON_TEMPLATES = {
-    "analyze": "Analyzed text and image metadata for policy and safety risk.",
-    "retrieve_policy": "Grounded the case using the retrieved moderation policy.",
-    "decide": "Selected the moderation action that best matches the policy risk.",
-    "review": "Validated the moderator action against the reviewer recommendation.",
-    "finalize": "Finalized the moderation outcome for this episode.",
-}
-
-
-def one_line(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip()
-
-
+_extra: Dict[str, str] = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
+ 
+client = OpenAI(
+    base_url=API_BASE_URL or None,
+    api_key=HF_TOKEN or "placeholder",
+    default_headers=_extra or None,
+)
+ 
+SYSTEM_PROMPT = (
+    "You are an expert content moderation AI. "
+    "At each step you receive the current content and must respond with a JSON object: "
+    '{"action_type": "<allow|flag|remove|escalate>", "reason": "<your reasoning>"}. '
+    "Steps: analyze → retrieve_policy → decide → review → finalize."
+)
+ 
+ 
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+ 
+def call_reset(case_id: str = "") -> Dict[str, Any]:
+    body: Dict[str, Any] = {}
+    if case_id:
+        body["options"] = {"case_id": case_id}
+    resp = requests.post(f"{ENV_BASE_URL}/reset", json=body, timeout=30)
+    resp.raise_for_status()
+    raw = resp.json()
+    return raw.get("observation", raw)
+ 
+ 
+def call_step(action: Dict[str, Any]) -> Dict[str, Any]:
+    resp = requests.post(f"{ENV_BASE_URL}/step", json={"action": action}, timeout=30)
+    resp.raise_for_status()
+    raw = resp.json()
+    if "observation" in raw:
+        flat = dict(raw["observation"])
+        flat["reward"] = raw.get("reward", 0.0)
+        flat["done"]   = raw.get("done", False)
+        return flat
+    return raw
+ 
+ 
+def call_get(path: str) -> Dict[str, Any]:
+    resp = requests.get(f"{ENV_BASE_URL}{path}", timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+ 
+ 
+# ---------------------------------------------------------------------------
+# Model helper
+# ---------------------------------------------------------------------------
+ 
+def ask_model(messages: list) -> Dict[str, Any]:
+    completion = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=messages,
+        max_tokens=256,
+        temperature=0.2,
+    )
+    raw = completion.choices[0].message.content.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    try:
+        return json.loads(raw.strip())
+    except json.JSONDecodeError:
+        return {"action_type": "flag", "reason": raw}
+ 
+ 
+# ---------------------------------------------------------------------------
+# Logging helpers — exact format required by the benchmark
+# ---------------------------------------------------------------------------
+ 
 def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
-
-
-def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
-    error_val = error if error else "null"
-    done_val = str(done).lower()
+ 
+ 
+def log_step(step_n: int, action_str: str, reward: float, done: bool,
+             error: Optional[str] = None) -> None:
+    error_field = error if error else "null"
+    done_field  = "true" if done else "false"
     print(
-        f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}",
+        f"[STEP] step={step_n} action={action_str} "
+        f"reward={reward:.2f} done={done_field} error={error_field}",
         flush=True,
     )
-
-
-def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
-    rewards_str = ",".join(f"{reward:.2f}" for reward in rewards)
+ 
+ 
+def log_end(success: bool, steps: int, score: float,
+            rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    success_field = "true" if success else "false"
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
+        f"[END] success={success_field} steps={steps} "
+        f"score={score:.2f} rewards={rewards_str}",
         flush=True,
     )
-
-
-def build_user_prompt(step: int, observation: dict, history: List[str]) -> str:
-    history_block = "\n".join(history[-4:]) if history else "None"
-    return textwrap.dedent(
-        f"""
-        Step: {step}
-        Current step type: {observation.get("step_type")}
-        Content: {json.dumps(observation.get("content", {}), ensure_ascii=False)}
-        Policy: {json.dumps(observation.get("policy", []), ensure_ascii=False)}
-        Metadata: {json.dumps(observation.get("metadata", {}), ensure_ascii=False)}
-        Previous steps:
-        {history_block}
-        Return the next moderation action as JSON.
-        """
-    ).strip()
-
-
-def extract_text_and_metadata(observation: dict) -> tuple[str, dict]:
-    content = observation.get("content", {})
-    if isinstance(content, dict):
-        return str(content.get("text", "")), content.get("image_metadata", {}) or {}
-    return "", {}
-
-
-def rule_based_decision(text: str, image_metadata: dict) -> str:
-    lowered = text.lower()
-    serialized_metadata = json.dumps(image_metadata, sort_keys=True).lower()
-    combined = f"{lowered} {serialized_metadata}"
-
-    if "kill" in combined or "murder" in combined:
-        return "remove"
-    if "nude" in combined or "nudity" in combined or "adult_pose" in combined:
-        return "flag"
-    if "slur" in combined or "dogpile" in combined or "harassment" in combined:
-        return "flag"
-    if "stroke" in combined or "ignore doctors" in combined or "medical_claim_score" in combined:
-        return "escalate"
-    return "allow"
-
-
-def fallback_action(observation: dict) -> ModerationEnvAction:
-    text, image_metadata = extract_text_and_metadata(observation)
-    step_type = str(observation.get("step_type", "analyze"))
-    reviewer_note = observation.get("metadata", {}).get("reviewer_note") or {}
-
-    if step_type == "review" and reviewer_note.get("recommended_action"):
-        action_type = reviewer_note["recommended_action"]
-    else:
-        action_type = rule_based_decision(text, image_metadata)
-
-    return ModerationEnvAction(
-        action_type=action_type,
-        reason=STEP_REASON_TEMPLATES.get(step_type, "Used deterministic fallback moderation logic."),
-    )
-
-
-def parse_model_action(raw: str) -> ModerationEnvAction:
-    payload = json.loads(raw)
-    action_type = str(payload.get("action_type", "")).strip().lower()
-    reason = one_line(str(payload.get("reason", "")).strip())
-    if action_type not in {"allow", "flag", "remove", "escalate"}:
-        raise ValueError("invalid action_type")
-    if not reason:
-        raise ValueError("empty reason")
-    return ModerationEnvAction(action_type=action_type, reason=reason)
-
-
-def get_model_action(client: OpenAI, step: int, observation: dict, history: List[str]) -> ModerationEnvAction:
-    user_prompt = build_user_prompt(step, observation, history)
-    try:
-        completion = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
-            response_format={"type": "json_object"},
-            stream=False,
-        )
-        text = (completion.choices[0].message.content or "").strip()
-        if not text:
-            return fallback_action(observation)
-        return parse_model_action(text)
-    except Exception:
-        return fallback_action(observation)
-
-
-def save_results(
-    rewards: List[float],
-    score: float,
-    success: bool,
-    steps: int,
-    task_name: str,
-    last_action: str,
-    last_error: Optional[str],
-) -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    path = OUTPUT_DIR / f"inference_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    payload = {
-        "generated_at": datetime.now().isoformat(),
-        "task": task_name,
-        "benchmark": BENCHMARK,
-        "model_name": MODEL_NAME,
-        "api_base_url": API_BASE_URL,
-        "local_image_name": IMAGE_NAME,
-        "success": success,
-        "steps": steps,
-        "score": score,
-        "rewards": rewards,
-        "last_action": last_action,
-        "last_error": last_error,
-    }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
-async def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-    env: Optional[ModerationEnv] = None
-
-    history: List[str] = []
+ 
+ 
+# ---------------------------------------------------------------------------
+# Main episode loop
+# ---------------------------------------------------------------------------
+ 
+def main() -> None:
+    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+ 
+    step_n    = 0
     rewards: List[float] = []
-    steps_taken = 0
-    score = 0.0
-    success = False
-    last_action = "null"
+    success   = False
     last_error: Optional[str] = None
-
+ 
     try:
-        env = await ModerationEnv.from_docker_image(IMAGE_NAME)
-        log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
-
-        if TASK_NAME not in DEFAULT_CASE_IDS:
-            raise RuntimeError(f"unknown task {TASK_NAME}")
-
-        result = await env.reset(case_id=TASK_NAME)
-        observation = result.observation.model_dump()
-
-        for step in range(1, MAX_STEPS + 1):
-            if result.done:
-                break
-
-            action = get_model_action(client, step, observation, history)
-            last_action = f"{action.action_type.value}('{one_line(action.reason)}')"
-
+        # --- reset ---
+        obs = call_reset(case_id=TASK_NAME)
+ 
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+ 
+        for step_name in EPISODE_STEPS:
+            step_n += 1
+ 
+            # Build prompt from current observation
+            user_content = (
+                f"Step: {step_name}\n"
+                f"Content: {json.dumps(obs.get('content', {}))}\n"
+                f"Policy: {json.dumps(obs.get('policy', []))}\n"
+                f"Message: {obs.get('message', '')}"
+            )
+            messages.append({"role": "user", "content": user_content})
+ 
+            # Ask model
+            action = ask_model(messages)
+            if action.get("action_type") not in VALID_ACTIONS:
+                action["action_type"] = "flag"
+            messages.append({"role": "assistant", "content": json.dumps(action)})
+ 
+            action_str = f"{action['action_type']}('{action.get('reason', '')[:60]}')"
+ 
+            # Step environment
             try:
-                result = await env.step(action)
-                observation = result.observation.model_dump()
-                reward = float(result.reward or 0.0)
-                done = bool(result.done)
-                error = None
+                obs = call_step(action)
+                step_reward = float(obs.get("reward", 0.0))
+                done        = bool(obs.get("done", False))
+                last_error  = None
             except Exception as exc:
-                reward = 0.0
-                done = True
-                error = one_line(str(exc))
-                last_error = error
-
-            rewards.append(reward)
-            steps_taken = step
-            log_step(step=step, action=last_action, reward=reward, done=done, error=error)
-            history.append(f"Step {step}: {last_action} -> reward {reward:.2f}")
-
+                step_reward = 0.0
+                done        = True
+                last_error  = str(exc)
+ 
+            rewards.append(step_reward)
+            log_step(step_n, action_str, step_reward, done, last_error)
+ 
             if done:
                 break
-
-        score = grade_episode_summary({"total_reward": sum(rewards)}) if MAX_TOTAL_REWARD > 0 else 0.0
-        score = min(max(score, 0.0), 1.0)
-        success = score >= SUCCESS_SCORE_THRESHOLD and last_error is None
-
-    finally:
+ 
+        # --- episode summary ---
         try:
-            if env is not None:
-                await env.close()
+            summary     = call_get("/episode_summary")
+            total_reward = float(summary.get("total_reward", sum(rewards)))
+            final_action = summary.get("final_action") or ""
         except Exception:
-            pass
-        if env is None:
-            log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
-        save_results(
-            rewards=rewards,
-            score=score,
-            success=success,
-            steps=steps_taken,
-            task_name=TASK_NAME,
-            last_action=last_action,
-            last_error=last_error,
-        )
-        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
-
-
+            total_reward = sum(rewards)
+            final_action = action.get("action_type", "")  # type: ignore[possibly-undefined]
+ 
+        # score in [0, 1]
+        score   = max(0.0, min(1.0, total_reward / MAX_EPISODE_REWARD))
+        success = score >= 0.5
+ 
+    except Exception as exc:
+        last_error = str(exc)
+        # Ensure rewards list has at least step_n entries
+        while len(rewards) < step_n:
+            rewards.append(0.0)
+        score   = 0.0
+        success = False
+ 
+    log_end(success=success, steps=step_n, score=score, rewards=rewards)
+ 
+ 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

@@ -5,10 +5,14 @@ from typing import Any
 from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
 
-from models import Action, Observation, State
+try:
+    from .models import Action, Observation, State
+except ImportError:
+    from models import Action, Observation, State
 
 
 class ModerationEnv(EnvClient[Action, Observation, State]):
+
     def _step_payload(self, action: Action) -> dict[str, Any]:
         return action.model_dump(mode="json")
 

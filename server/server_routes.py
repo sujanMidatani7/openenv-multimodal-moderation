@@ -1,49 +1,42 @@
+"""
+server_routes.py
+Extra HTTP routes mounted onto the FastAPI app in app.py.
+Kept here so app.py stays small and routes are easy to find.
+"""
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
-from server.logic import DEFAULT_CASE_IDS, enumerate_tasks, run_grader_checks
-from server.env import ContentModerationEnv
+router = APIRouter()
 
 
-def attach_server_routes(app: FastAPI, env: ContentModerationEnv) -> FastAPI:
-    @app.get("/state_full")
-    def state_full() -> dict:
-        return env.state.model_dump()
+def register_routes(app, env) -> None:
+    """Call this from app.py after creating the FastAPI app."""
 
     @app.get("/episode_summary")
-    def episode_summary() -> dict:
+    async def episode_summary() -> JSONResponse:
         state = env.state
-        data = state.state_data
-        return {
+        breakdown = state.reward_breakdown or {}
+        total_reward = round(sum(breakdown.values()), 4)
+        return JSONResponse({
             "episode_id": state.episode_id,
             "step_count": state.step_count,
             "done": state.done,
-            "total_reward": state.total_reward,
-            "current_step": state.current_step.value,
-            "case_id": data.get("case_id"),
-            "expected_action": data.get("expected_action"),
-            "final_action": data.get("final_action"),
-            "reviewer_note": data.get("reviewer_note"),
-            "reward_breakdown": data.get("reward_breakdown", []),
-        }
+            "total_reward": total_reward,
+            "reward_breakdown": breakdown,
+            "final_action": state.final_action,
+            "reviewer_note": state.reviewer_note,
+        })
 
     @app.get("/cases")
-    def list_cases() -> dict:
-        return {"case_ids": DEFAULT_CASE_IDS}
+    async def list_cases() -> JSONResponse:
+        try:
+            from .logic import CASE_IDS
+        except ImportError:
+            from logic import CASE_IDS
+        return JSONResponse({"cases": CASE_IDS})
 
-    @app.get("/tasks")
-    def list_tasks() -> dict:
-        return {"tasks": enumerate_tasks()}
-
-    @app.get("/grader_checks")
-    def grader_checks() -> dict:
-        checks = run_grader_checks()
-        return {
-            "checks": checks,
-            "task_count": len(checks),
-            "graded_task_count": sum(1 for item in checks if item.get("has_grader")),
-            "all_scores_in_range": all(item["score_range_ok"] for item in checks),
-        }
-
-    return app
+    @app.get("/state_full")
+    async def state_full() -> JSONResponse:
+        return JSONResponse(env.state.model_dump(mode="json"))

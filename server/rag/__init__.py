@@ -1,4 +1,3 @@
-from server.rag.policies import POLICY_CHUNKS
-from server.rag.retriever import PolicyRetriever
+from .retriever import retrieve_policy_chunks
 
-__all__ = ["POLICY_CHUNKS", "PolicyRetriever"]
+__all__ = ["retrieve_policy_chunks"]

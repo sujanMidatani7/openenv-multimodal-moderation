@@ -1,16 +1,16 @@
-from server.env import ContentModerationEnv
-from client import ModerationEnvClient, StepResult
+from client import ModerationEnv, ModerationEnvAction, ModerationEnvObservation, ModerationEnvState
 from models import Action, ActionType, Content, Observation, PolicyChunk, State, StepType
 
 __all__ = [
+    "ModerationEnv",
+    "ModerationEnvAction",
+    "ModerationEnvObservation",
+    "ModerationEnvState",
     "Action",
     "ActionType",
     "Content",
-    "ContentModerationEnv",
-    "ModerationEnvClient",
     "Observation",
     "PolicyChunk",
     "State",
-    "StepResult",
     "StepType",
 ]
