@@ -1,4 +1,5 @@
 spec_version: "1"
+
 name: "openenv-multimodal-moderation"
 type: "environment"
 runtime: "docker"
@@ -9,33 +10,36 @@ description: >
   OpenEnv-compliant multimodal content moderation environment with staged
   analysis, policy retrieval, moderation, reviewer validation, and dense reward.
 
+endpoints:
+  health: GET /health
+  reset: POST /reset
+  step: POST /step
+  state: GET /state
+  tasks: GET /tasks
+  grader: POST /grader
+
 tasks:
   - id: "violence-remove"
     name: "violence-remove"
     description: "Agent must identify violent content and issue a remove action."
     difficulty: "hard"
-    grader: "/grade"
 
   - id: "nudity-flag"
     name: "nudity-flag"
     description: "Agent must identify nudity/sexual content and issue a flag action."
     difficulty: "medium"
-    grader: "/grade"
 
   - id: "harassment-flag"
     name: "harassment-flag"
     description: "Agent must identify harassment and issue a flag action."
     difficulty: "medium"
-    grader: "/grade"
 
   - id: "misinfo-escalate"
     name: "misinfo-escalate"
     description: "Agent must identify misinformation and escalate for review."
     difficulty: "hard"
-    grader: "/grade"
 
   - id: "benign-allow"
     name: "benign-allow"
     description: "Agent must correctly allow benign/safe content."
     difficulty: "easy"
-    grader: "/grade"
