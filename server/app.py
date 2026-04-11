@@ -119,6 +119,25 @@ async def episode_summary() -> JSONResponse:
         "reviewer_note": state.reviewer_note,
     })
 
+@app.post("/grade")
+async def grade() -> JSONResponse:
+    state = _env.state
+    breakdown = dict(state.reward_breakdown or {})
+    total_reward = max(0.01, min(0.99, float(sum(breakdown.values()))))
+
+    passed = bool(state.done and total_reward >= 0.5)
+
+    return JSONResponse({
+        "task_id": state.current_case_id,
+        "passed": passed,
+        "score": total_reward,
+        "reward": total_reward,
+        "done": state.done,
+        "final_action": state.final_action,
+        "reviewer_note": state.reviewer_note,
+        "reward_breakdown": breakdown,
+    })
+
 
 # ---------------------------------------------------------------------------
 # Helper endpoints

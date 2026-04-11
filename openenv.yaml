@@ -1,5 +1,4 @@
 spec_version: "1"
-
 name: "openenv-multimodal-moderation"
 type: "environment"
 runtime: "docker"
@@ -14,49 +13,29 @@ tasks:
   - id: "violence-remove"
     name: "violence-remove"
     description: "Agent must identify violent content and issue a remove action."
-    difficulty: "hard"  # Explicit violence detection + removal is most complex
-    grader:
-      type: "reward_threshold"
-      threshold: 0.5
-      endpoint: "/episode_summary"
-      reward_field: "total_reward"
+    difficulty: "hard"
+    grader: "/grade"
 
   - id: "nudity-flag"
     name: "nudity-flag"
     description: "Agent must identify nudity/sexual content and issue a flag action."
-    difficulty: "medium"  # Visual content analysis required
-    grader:
-      type: "reward_threshold"
-      threshold: 0.5
-      endpoint: "/episode_summary"
-      reward_field: "total_reward"
+    difficulty: "medium"
+    grader: "/grade"
 
   - id: "harassment-flag"
     name: "harassment-flag"
     description: "Agent must identify harassment and issue a flag action."
-    difficulty: "medium"  # Context/pattern recognition needed
-    grader:
-      type: "reward_threshold"
-      threshold: 0.5
-      endpoint: "/episode_summary"
-      reward_field: "total_reward"
+    difficulty: "medium"
+    grader: "/grade"
 
   - id: "misinfo-escalate"
     name: "misinfo-escalate"
     description: "Agent must identify misinformation and escalate for review."
-    difficulty: "hard"  # Requires fact-checking nuance + escalation judgment
-    grader:
-      type: "reward_threshold"
-      threshold: 0.5
-      endpoint: "/episode_summary"
-      reward_field: "total_reward"
+    difficulty: "hard"
+    grader: "/grade"
 
   - id: "benign-allow"
     name: "benign-allow"
     description: "Agent must correctly allow benign/safe content."
-    difficulty: "easy"  # Baseline safe content recognition
-    grader:
-      type: "reward_threshold"
-      threshold: 0.5
-      endpoint: "/episode_summary"
-      reward_field: "total_reward"
+    difficulty: "easy"
+    grader: "/grade"
