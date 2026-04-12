@@ -1,45 +1,52 @@
-spec_version: "1"
+spec_version: 1
 
-name: "openenv-multimodal-moderation"
-type: "environment"
-runtime: "docker"
-app: "server.app:app"
+name: openenv-multimodal-moderation
+type: environment
+runtime: docker
+app: server.app:app
 port: 8000
 
 description: >
   OpenEnv-compliant multimodal content moderation environment with staged
   analysis, policy retrieval, moderation, reviewer validation, and dense reward.
 
-endpoints:
-  health: GET /health
-  reset: POST /reset
-  step: POST /step
-  state: GET /state
-  tasks: GET /tasks
-  grader: POST /grader
-
 tasks:
-  - id: "violence-remove"
-    name: "violence-remove"
-    description: "Agent must identify violent content and issue a remove action."
-    difficulty: "hard"
+  - name: violence-remove
+    description: Agent must identify violent content and issue a remove action
+    grader:
+      type: reward_threshold
+      threshold: 0.5
+      endpoint: /episode_summary
+      reward_field: total_reward
 
-  - id: "nudity-flag"
-    name: "nudity-flag"
-    description: "Agent must identify nudity/sexual content and issue a flag action."
-    difficulty: "medium"
+  - name: nudity-flag
+    description: Agent must identify nudity and issue a flag action
+    grader:
+      type: reward_threshold
+      threshold: 0.5
+      endpoint: /episode_summary
+      reward_field: total_reward
 
-  - id: "harassment-flag"
-    name: "harassment-flag"
-    description: "Agent must identify harassment and issue a flag action."
-    difficulty: "medium"
+  - name: harassment-flag
+    description: Agent must identify harassment and issue a flag action
+    grader:
+      type: reward_threshold
+      threshold: 0.5
+      endpoint: /episode_summary
+      reward_field: total_reward
 
-  - id: "misinfo-escalate"
-    name: "misinfo-escalate"
-    description: "Agent must identify misinformation and escalate for review."
-    difficulty: "hard"
+  - name: misinfo-escalate
+    description: Agent must identify misinformation and escalate
+    grader:
+      type: reward_threshold
+      threshold: 0.5
+      endpoint: /episode_summary
+      reward_field: total_reward
 
-  - id: "benign-allow"
-    name: "benign-allow"
-    description: "Agent must correctly allow benign/safe content."
-    difficulty: "easy"
+  - name: benign-allow
+    description: Agent must correctly allow benign content
+    grader:
+      type: reward_threshold
+      threshold: 0.5
+      endpoint: /episode_summary
+      reward_field: total_reward
