@@ -1,15 +1,37 @@
-spec_version: 1
-
 name: openenv-multimodal-moderation
-type: environment
-runtime: docker
-app: server.app:app
-port: 8000
-
+version: "1.0.0"
 description: >
   OpenEnv-compliant multimodal content moderation environment with staged
   analysis, policy retrieval, moderation, reviewer validation, and dense reward.
-
+framework: meta-pytorch-openenv
+license: Apache-2.0
+entrypoint: server:app
+episode_flow:
+  - analyze
+  - retrieve_policy
+  - decide
+  - review
+  - finalize
+models:
+  action:
+    fields:
+      action_type: allow|flag|remove|escalate
+      reason: string
+  observation:
+    fields:
+      content: text + image metadata
+      policy: retrieved policy chunks
+      step_type: analyze|retrieve_policy|decide|review|finalize
+      step_count: integer
+  state:
+    fields:
+      episode_id: string
+      step_count: integer
+      done: boolean
+policy_retrieval:
+  source: server/rag/policies.json
+  strategy: keyword_overlap
+  top_k: 3
 tasks:
   - name: violence-remove
     description: Agent must identify violent content and issue a remove action
@@ -18,15 +40,15 @@ tasks:
       threshold: 0.5
       endpoint: /episode_summary
       reward_field: total_reward
-
+ 
   - name: nudity-flag
-    description: Agent must identify nudity and issue a flag action
+    description: Agent must identify nudity/sexual content and issue a flag action
     grader:
       type: reward_threshold
       threshold: 0.5
       endpoint: /episode_summary
       reward_field: total_reward
-
+ 
   - name: harassment-flag
     description: Agent must identify harassment and issue a flag action
     grader:
@@ -34,19 +56,33 @@ tasks:
       threshold: 0.5
       endpoint: /episode_summary
       reward_field: total_reward
-
+ 
   - name: misinfo-escalate
-    description: Agent must identify misinformation and escalate
+    description: Agent must identify misinformation and escalate for review
     grader:
       type: reward_threshold
       threshold: 0.5
       endpoint: /episode_summary
       reward_field: total_reward
-
+ 
   - name: benign-allow
-    description: Agent must correctly allow benign content
+    description: Agent must correctly allow benign/safe content
     grader:
       type: reward_threshold
       threshold: 0.5
       endpoint: /episode_summary
       reward_field: total_reward
+rewards:
+  analysis_step: 0.2
+  retrieval_step: 0.2
+  correct_decision: 1.0
+  reviewer_agreement: 0.2
+  unsafe_penalty: -0.6
+server:
+  reset: POST /reset
+  step: POST /step
+  state: GET /state
+  state_full: GET /state_full
+  episode_summary: GET /episode_summary
+  schema: GET /schema
+  docs: GET /docs
