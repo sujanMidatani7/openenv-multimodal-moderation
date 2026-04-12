@@ -119,61 +119,6 @@ async def episode_summary() -> JSONResponse:
         "reviewer_note": state.reviewer_note,
     })
 
-@app.post("/grader")
-async def grader():
-    state = _env.state
-    breakdown = dict(state.reward_breakdown or {})
-    score = float(sum(breakdown.values()))
-    score = max(0.0, min(1.0, score))
-
-    return {
-        "task_id": state.current_case_id,
-        "score": score,
-        "reward": score,
-        "passed": bool(state.done and score >= 0.5),
-        "done": state.done,
-        "final_action": state.final_action,
-        "reviewer_note": state.reviewer_note,
-        "reward_breakdown": breakdown,
-    }
-
-
-@app.get("/tasks")
-async def list_tasks():
-    return {
-        "tasks": [
-            {
-                "id": "violence-remove",
-                "name": "violence-remove",
-                "description": "Agent must identify violent content and issue a remove action.",
-                "difficulty": "hard",
-            },
-            {
-                "id": "nudity-flag",
-                "name": "nudity-flag",
-                "description": "Agent must identify nudity/sexual content and issue a flag action.",
-                "difficulty": "medium",
-            },
-            {
-                "id": "harassment-flag",
-                "name": "harassment-flag",
-                "description": "Agent must identify harassment and issue a flag action.",
-                "difficulty": "medium",
-            },
-            {
-                "id": "misinfo-escalate",
-                "name": "misinfo-escalate",
-                "description": "Agent must identify misinformation and escalate for review.",
-                "difficulty": "hard",
-            },
-            {
-                "id": "benign-allow",
-                "name": "benign-allow",
-                "description": "Agent must correctly allow benign/safe content.",
-                "difficulty": "easy",
-            },
-        ]
-    }
 
 # ---------------------------------------------------------------------------
 # Helper endpoints

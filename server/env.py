@@ -12,7 +12,6 @@ try:
         get_case,
         get_expected_action,
         compute_step_reward,
-        load_tasks
     )
     from .rag.retriever import retrieve_policy_chunks
 except ImportError:
@@ -38,7 +37,6 @@ class ModerationEnvironment(Environment):
         self._state = State()
         self._case: Optional[Dict[str, Any]] = None
         self._current_step_index: int = 0
-        self.tasks = load_tasks()
 
     # ------------------------------------------------------------------
     # OpenEnv interface

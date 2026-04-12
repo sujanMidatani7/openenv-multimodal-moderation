@@ -115,6 +115,3 @@ def compute_step_reward(
         return 0.0
     # finalize — no additional reward
     return 0.0
-
-def load_tasks():
-    return list(MODERATION_CASES.values())
